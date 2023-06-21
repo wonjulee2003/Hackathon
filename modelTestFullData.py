@@ -145,7 +145,6 @@ def count_parameters(model):
 
 # Load the dataset
 
-
 def load_dataset(data_length=128):
     # Load .npy files
 
@@ -198,6 +197,8 @@ def load_dataset(data_length=128):
 
     return torch.utils.data.TensorDataset(in_B, in_F, in_T, in_D, out_H, out_H_head), normH
 
+# Config the model training
+
 def main():
     print("Main loop entered!")
 
@@ -209,8 +210,8 @@ def main():
     torch.backends.cudnn.benchmark = False
 
     # Hyperparameters
-    NUM_EPOCH = 200
-    BATCH_SIZE = 128
+    NUM_EPOCH = 500
+    BATCH_SIZE = 8192
     DECAY_EPOCH = 150
     DECAY_RATIO = 0.9
     LR_INI = 0.004
@@ -224,6 +225,7 @@ def main():
     # Record initial time
     start_time = time.time()
 
+    torch.cuda.nvtx.range_push("load_data")
     # Load dataset
     dataset, normH = load_dataset()
 
@@ -234,6 +236,7 @@ def main():
     kwargs = {'num_workers': 0, 'pin_memory': True, 'pin_memory_device': "cuda"}
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, **kwargs)
     valid_loader = torch.utils.data.DataLoader(valid_dataset, batch_size=BATCH_SIZE, shuffle=False, **kwargs)
+    torch.cuda.nvtx.range_pop()
 
     # Setup network
     net = Transformer(
@@ -264,6 +267,7 @@ def main():
 
     # Train the network
     for epoch_i in range(NUM_EPOCH):
+        torch.cuda.nvtx.range_push("epoch + " + str(epoch_i))
 
         # Train for one epoch
         epoch_train_loss = 0
@@ -273,15 +277,34 @@ def main():
         torch.cuda.synchronize()
         start_epoch = time.time()
 
+        torch.cuda.nvtx.range_push("train-loop")
         for in_B, in_F, in_T, in_D, out_H, out_H_head in train_loader:
             optimizer.zero_grad()
+            torch.cuda.nvtx.range_push("model_data_in")
             output = net(src=in_B.to(device), tgt=out_H_head.to(device), var=torch.cat((in_F.to(device), in_T.to(device), in_D.to(device)), dim=1), device=device)
+            torch.cuda.nvtx.range_pop()
+
+            torch.cuda.nvtx.range_push("loss")
             loss = criterion(output[:,:-1,:], out_H.to(device)[:,1:,:])
+            torch.cuda.nvtx.range_pop()
+
+            torch.cuda.nvtx.range_push("backward")
             loss.backward()
+            torch.cuda.nvtx.range_pop()
+
+            torch.cuda.nvtx.range_push("clip_grad_norm")
             torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=0.25)
+            torch.cuda.nvtx.range_pop()
+
+            torch.cuda.nvtx.range_push("optimizer")
             optimizer.step()
+            torch.cuda.nvtx.range_pop()
+
             epoch_train_loss += loss.item()
 
+        torch.cuda.nvtx.range_pop()
+
+        torch.cuda.nvtx.range_push("validation")
         # Compute validation
         with torch.no_grad():
             net.eval()
@@ -290,6 +313,7 @@ def main():
                 output = net(src=in_B.to(device), tgt=out_H_head.to(device), var=torch.cat((in_F.to(device), in_T.to(device), in_D.to(device)), dim=1), device=device)
                 loss = criterion(output[:,:-1,:], out_H.to(device)[:,1:,:])
                 epoch_valid_loss += loss.item()
+        torch.cuda.nvtx.range_pop()
         
         # Record epoch time 
         torch.cuda.synchronize()
@@ -300,6 +324,9 @@ def main():
           print(f"Epoch {epoch_i+1:2d} "
               f"Train {epoch_train_loss / len(train_dataset) * 1e5:.5f} "
               f"Valid {epoch_valid_loss / len(valid_dataset) * 1e5:.5f}")
+        
+        torch.cuda.nvtx.range_pop()
+
 
     elapsed = time.time() - start_time
     print(f"Total Time Elapsed: {elapsed}")    
@@ -308,7 +335,7 @@ def main():
     # Save the model parameters
     torch.save(net.state_dict(), "/scratch/gpfs/sw0123/Model_TransformerFull.sd")
     print("Training finished! Model is saved!")
-    
+
     timeNP = np.array(times)
     np.save("epochTime", timeNP)
 
