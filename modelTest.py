@@ -173,7 +173,7 @@ def load_dataset(data_length=128):
     in_T = (in_T-torch.mean(in_T))/torch.std(in_T)
     in_D = (in_D-torch.mean(in_D))/torch.std(in_D)
 
-    MeanH = torch.std(out_H)
+    MeanH = torch.mean(out_H)
     StdH = torch.std(out_H)
     out_H = (out_H-MeanH)/StdH
 
