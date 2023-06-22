@@ -194,6 +194,14 @@ def load_dataset(data_length=128):
     print(out_H.size())
     print(out_H_head.size())
 
+    device = torch.device("cuda")
+    in_B = in_B.to(device)
+    in_F = in_F.to(device)
+    in_T = in_T.to(device)
+    in_D = in_D.to(device)
+    out_H = out_H.to(device)
+    out_H_head = out_H_head.to(device)
+
     return torch.utils.data.TensorDataset(in_B, in_F, in_T, in_D, out_H, out_H_head), normH
 
 # Config the model training
@@ -233,7 +241,7 @@ def main():
     valid_size = len(dataset) - train_size
     train_dataset, valid_dataset = torch.utils.data.random_split(dataset, [train_size, valid_size])
     
-    kwargs = {'num_workers': 0, 'pin_memory': True, 'pin_memory_device': "cuda"}
+    kwargs = {'num_workers': 0, 'pin_memory': False, 'pin_memory_device': "cuda"}
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, **kwargs)
     valid_loader = torch.utils.data.DataLoader(valid_dataset, batch_size=BATCH_SIZE, shuffle=False, **kwargs)
     torch.cuda.nvtx.range_pop()
@@ -285,11 +293,11 @@ def main():
             torch.cuda.nvtx.range_pop()
 
             torch.cuda.nvtx.range_push("model_data_in")
-            output = net(src=in_B.to(device), tgt=out_H_head.to(device), var=torch.cat((in_F.to(device), in_T.to(device), in_D.to(device)), dim=1), device=device)
+            output = net(src=in_B, tgt=out_H_head, var=torch.cat((in_F, in_T, in_D), dim=1), device=device)
             torch.cuda.nvtx.range_pop()
 
             torch.cuda.nvtx.range_push("loss")
-            loss = criterion(output[:,:-1,:], out_H.to(device)[:,1:,:])
+            loss = criterion(output[:,:-1,:], out_H[:,1:,:])
             torch.cuda.nvtx.range_pop()
 
             torch.cuda.nvtx.range_push("backward")
@@ -314,8 +322,8 @@ def main():
             net.eval()
             epoch_valid_loss = 0
             for in_B, in_F, in_T, in_D, out_H, out_H_head in valid_loader:
-                output = net(src=in_B.to(device), tgt=out_H_head.to(device), var=torch.cat((in_F.to(device), in_T.to(device), in_D.to(device)), dim=1), device=device)
-                loss = criterion(output[:,:-1,:], out_H.to(device)[:,1:,:])
+                output = net(src=in_B, tgt=out_H_head, var=torch.cat((in_F, in_T, in_D), dim=1), device=device)
+                loss = criterion(output[:,:-1,:], out_H[:,1:,:])
                 epoch_valid_loss += loss.item()
         torch.cuda.nvtx.range_pop()
         

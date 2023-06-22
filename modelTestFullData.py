@@ -145,6 +145,7 @@ def count_parameters(model):
 
 # Load the dataset
 
+
 def load_dataset(data_length=128):
     # Load .npy files
 
@@ -154,19 +155,12 @@ def load_dataset(data_length=128):
     in_file4="/scratch/gpfs/sw0123/NPyData/CycleAugRep_APEC/dataset_in_D.npy"
     out_file="/scratch/gpfs/sw0123/NPyData/CycleAugRep_APEC/dataset_out_H.npy"
 
-    B = torch.from_numpy(np.load(in_file1)).float().view(-1, 128, 1)
-    Freq = torch.from_numpy(np.load(in_file2)).float().view(-1, 1)
+    in_B = torch.from_numpy(np.load(in_file1)).float().view(-1, 128, 1)
+    in_F = torch.from_numpy(np.load(in_file2)).float().view(-1, 1)
     #is freq log10? YES.
-    Temp = torch.from_numpy(np.load(in_file3)).float().view(-1, 1)
-    Hdc = torch.from_numpy(np.load(in_file4)).float().view(-1, 1)
-    H = torch.from_numpy(np.load(out_file)).float().view(-1, 128, 1)
-
-    # Format data into tensors
-    in_B = torch.from_numpy(B).float().view(-1, data_length, 1)
-    in_F = torch.from_numpy(Freq).float().view(-1, 1)
-    in_T = torch.from_numpy(Temp).float().view(-1, 1)
-    in_D = torch.from_numpy(Hdc).float().view(-1, 1)
-    out_H = torch.from_numpy(H).float().view(-1, data_length, 1)
+    in_T = torch.from_numpy(np.load(in_file3)).float().view(-1, 1)
+    in_D = torch.from_numpy(np.load(in_file4)).float().view(-1, 1)
+    out_H = torch.from_numpy(np.load(out_file)).float().view(-1, 128, 1)
 
     # Normalize
     in_B = (in_B-torch.mean(in_B))/torch.std(in_B)
@@ -210,8 +204,8 @@ def main():
     torch.backends.cudnn.benchmark = False
 
     # Hyperparameters
-    NUM_EPOCH = 500
-    BATCH_SIZE = 8192
+    NUM_EPOCH = 100
+    BATCH_SIZE = 1024
     DECAY_EPOCH = 150
     DECAY_RATIO = 0.9
     LR_INI = 0.004
@@ -233,6 +227,7 @@ def main():
     train_size = int(0.8 * len(dataset))
     valid_size = len(dataset) - train_size
     train_dataset, valid_dataset = torch.utils.data.random_split(dataset, [train_size, valid_size])
+    
     kwargs = {'num_workers': 0, 'pin_memory': True, 'pin_memory_device': "cuda"}
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, **kwargs)
     valid_loader = torch.utils.data.DataLoader(valid_dataset, batch_size=BATCH_SIZE, shuffle=False, **kwargs)
@@ -279,7 +274,11 @@ def main():
 
         torch.cuda.nvtx.range_push("train-loop")
         for in_B, in_F, in_T, in_D, out_H, out_H_head in train_loader:
-            optimizer.zero_grad()
+            torch.cuda.nvtx.range_push("zero gradient")
+            for param in net.parameters():
+                param.grad = None
+            torch.cuda.nvtx.range_pop()
+
             torch.cuda.nvtx.range_push("model_data_in")
             output = net(src=in_B.to(device), tgt=out_H_head.to(device), var=torch.cat((in_F.to(device), in_T.to(device), in_D.to(device)), dim=1), device=device)
             torch.cuda.nvtx.range_pop()
@@ -333,7 +332,7 @@ def main():
     print(f"Average time per Epoch: {sum(times[DISCARD:])/NUM_EPOCH}")
     
     # Save the model parameters
-    torch.save(net.state_dict(), "/scratch/gpfs/sw0123/Model_TransformerFull.sd")
+    #torch.save(net.state_dict(), "/scratch/gpfs/sw0123/Model_TransformerTest.sd")
     print("Training finished! Model is saved!")
 
     timeNP = np.array(times)
