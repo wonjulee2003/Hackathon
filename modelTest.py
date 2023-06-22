@@ -209,8 +209,8 @@ def main():
     torch.backends.cudnn.benchmark = False
 
     # Hyperparameters
-    NUM_EPOCH = 500
-    BATCH_SIZE = 128
+    NUM_EPOCH = 100
+    BATCH_SIZE = 1024
     DECAY_EPOCH = 150
     DECAY_RATIO = 0.9
     LR_INI = 0.004
@@ -232,7 +232,8 @@ def main():
     train_size = int(0.8 * len(dataset))
     valid_size = len(dataset) - train_size
     train_dataset, valid_dataset = torch.utils.data.random_split(dataset, [train_size, valid_size])
-    kwargs = {'num_workers': 0, 'pin_memory': True, 'pin_memory_device': "cuda"}
+    
+    kwargs = {'num_workers': 4, 'pin_memory': True, 'pin_memory_device': "cuda", 'persistent_workers': True, 'prefetch_factor': 4}    
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, **kwargs)
     valid_loader = torch.utils.data.DataLoader(valid_dataset, batch_size=BATCH_SIZE, shuffle=False, **kwargs)
     torch.cuda.nvtx.range_pop()
@@ -253,6 +254,8 @@ def main():
       dim_feedforward_encoder=40,
       dim_feedforward_decoder=40,
       dim_feedforward_projecter=40).to(device)
+
+    # net = torch.compile(net) # NOT SUPPORTED IN 3.11+
 
     # Log the number of parameters
     print("Number of parameters: ", count_parameters(net))
@@ -278,7 +281,11 @@ def main():
 
         torch.cuda.nvtx.range_push("train-loop")
         for in_B, in_F, in_T, in_D, out_H, out_H_head in train_loader:
-            optimizer.zero_grad()
+            torch.cuda.nvtx.range_push("zero gradient")
+            for param in net.parameters():
+                param.grad = None
+            torch.cuda.nvtx.range_pop()
+
             torch.cuda.nvtx.range_push("model_data_in")
             output = net(src=in_B.to(device), tgt=out_H_head.to(device), var=torch.cat((in_F.to(device), in_T.to(device), in_D.to(device)), dim=1), device=device)
             torch.cuda.nvtx.range_pop()
@@ -332,7 +339,7 @@ def main():
     print(f"Average time per Epoch: {sum(times[DISCARD:])/NUM_EPOCH}")
     
     # Save the model parameters
-    torch.save(net.state_dict(), "/scratch/gpfs/sw0123/Model_TransformerTest.sd")
+    torch.save(net.state_dict(), "/scratch/gpfs/sw0123/Model_TransformerStandard.sd")
     print("Training finished! Model is saved!")
 
     timeNP = np.array(times)
