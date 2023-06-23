@@ -172,7 +172,7 @@ def load_dataset(data_length=128):
     in_T = (in_T-torch.mean(in_T))/torch.std(in_T)
     in_D = (in_D-torch.mean(in_D))/torch.std(in_D)
 
-    MeanH = torch.std(out_H)
+    MeanH = torch.mean(out_H)
     StdH = torch.std(out_H)
     out_H = (out_H-MeanH)/StdH
 
@@ -239,7 +239,7 @@ def main():
       dim_feedforward_projecter=40).to(device)
 
     # Load trained parameters
-    state_dict = torch.load('/scratch/gpfs/sw0123/Model_TransformerTest.sd')
+    state_dict = torch.load('/scratch/gpfs/sw0123/Model_TransformerMP.sd')
     net.load_state_dict(state_dict, strict=True)
     net.eval()
     print("Model is loaded!")

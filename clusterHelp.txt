@@ -1,0 +1,69 @@
+#!/bin/bash
+#SBATCH --job-name=myjob         # create a short name for your job
+#SBATCH --nodes=1                # node count
+#SBATCH --ntasks=1               # total number of tasks across all nodes
+#SBATCH --cpus-per-task=1        # cpu-cores per task (>1 if multi-threaded tasks)
+#SBATCH --gres=gpu:1             # number of gpus per node
+#SBATCH --mem=2G                 # total memory (RAM) per node
+#SBATCH --time=00:00:30          # total run time limit (HH:MM:SS)
+#SBATCH --mail-type=begin        # send email when job begins
+#SBATCH --mail-type=end          # send email when job ends
+#SBATCH --mail-user=edeleu@princeton.edu
+
+module purge
+module load anaconda3/2023.3 
+conda activate /scratch/network/sw0123/torch2-env 
+
+python modelTest.py
+
+salloc --nodes=1 --mem=4G --gres=gpu:1 --time=00:10:00 --reservation=openhack
+conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia       
+conda activate /scratch/network/sw0123/torch2-env    
+module load anaconda3/2023.3
+
+/usr/local/bin/nsys profile --trace=cuda,nvtx,osrt -o myprofile_1778453 python modelTest.py
+
+
+updated :
+
+module purge
+module load anaconda3/2023.3 
+conda activate /scratch/gpfs/sw0123/torch-env 
+conda activate /scratch/gpfs/sw0123/torch-2env  
+
+python modelTest.py
+
+salloc --nodes=1 --mem=4G --gres=gpu:1 --time=00:3:00 --cpus-per-task=4 --reservation=openhack
+conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia       
+module load anaconda3/2023.3
+
+conda create --prefix /scratch/gpfs/<NetID>/torch2-env
+CONDA_OVERRIDE_CUDA="11.2" conda create --prefix /scratch/gpfs/sw0123/torch-2env "pytorch==1.13*=cuda11*" torchvision -c conda-forge
+
+/usr/local/bin/nsys profile --trace=cuda,nvtx,osrt -o myprofile_DataLoad python /scratch/gpfs/sw0123/modelTest.py 
+
+/usr/local/bin/nsys profile --trace=cuda,nvtx,osrt -o magnet -f true python /scratch/gpfs/sw0123/modelTest.py
+python /scratch/gpfs/sw0123/modelTestFullData.py
+python /scratch/gpfs/sw0123/modelTestMP.py
+
+
+/usr/local/bin/nsys profile --trace=cuda,nvtx,osrt -o magnet -f true python /scratch/gpfs/sw0123/modelTestFullData.py
+
+/usr/local/bin/nsys profile --trace=cuda,nvtx,osrt -o FourWorkers python /scratch/gpfs/sw0123/modelTest.py 
+
+
+/usr/local/bin/nsys profile --trace=cuda,nvtx,osrt -o OneWork python /scratch/gpfs/sw0123/modelTest.py 
+
+
+
+
+ffcv:
+
+Installation: 
+conda create --prefix /scratch/gpfs/<YourID>/ffcv  python=3.9 cupy pkg-config libjpeg-turbo opencv pytorch torchvision cudatoolkit=11.6 numba -c conda-forge -c pytorch
+pip install ffcv
+
+conda activate /scratch/gpfs/sw0123/ffcv
+/usr/local/bin/nsys profile --trace=cuda,nvtx,osrt -o ffcvfirst python /scratch/gpfs/sw0123/modelTestffcv.py
+
+salloc --nodes=1 --mem=4G --gres=gpu:1 --time=00:10:00 --reservation=openhack

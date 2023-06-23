@@ -154,19 +154,12 @@ def load_dataset(data_length=128):
     in_file4="/scratch/gpfs/sw0123/NPyData/CycleAugRep_APEC/dataset_in_D.npy"
     out_file="/scratch/gpfs/sw0123/NPyData/CycleAugRep_APEC/dataset_out_H.npy"
 
-    B = torch.from_numpy(np.load(in_file1)).float().view(-1, 128, 1)
-    Freq = torch.from_numpy(np.load(in_file2)).float().view(-1, 1)
+    in_B = torch.from_numpy(np.load(in_file1)).float().view(-1, 128, 1)
+    in_F = torch.from_numpy(np.load(in_file2)).float().view(-1, 1)
     #is freq log10? YES.
-    Temp = torch.from_numpy(np.load(in_file3)).float().view(-1, 1)
-    Hdc = torch.from_numpy(np.load(in_file4)).float().view(-1, 1)
-    H = torch.from_numpy(np.load(out_file)).float().view(-1, 128, 1)
-
-    # Format data into tensors
-    in_B = torch.from_numpy(B).float().view(-1, data_length, 1)
-    in_F = torch.from_numpy(Freq).float().view(-1, 1)
-    in_T = torch.from_numpy(Temp).float().view(-1, 1)
-    in_D = torch.from_numpy(Hdc).float().view(-1, 1)
-    out_H = torch.from_numpy(H).float().view(-1, data_length, 1)
+    in_T = torch.from_numpy(np.load(in_file3)).float().view(-1, 1)
+    in_D = torch.from_numpy(np.load(in_file4)).float().view(-1, 1)
+    out_H = torch.from_numpy(np.load(out_file)).float().view(-1, 128, 1)
 
     # Normalize
     in_B = (in_B-torch.mean(in_B))/torch.std(in_B)
@@ -210,8 +203,8 @@ def main():
     torch.backends.cudnn.benchmark = False
 
     # Hyperparameters
-    NUM_EPOCH = 500
-    BATCH_SIZE = 8192
+    NUM_EPOCH = 20
+    BATCH_SIZE = 1024
     DECAY_EPOCH = 150
     DECAY_RATIO = 0.9
     LR_INI = 0.004
@@ -233,9 +226,16 @@ def main():
     train_size = int(0.8 * len(dataset))
     valid_size = len(dataset) - train_size
     train_dataset, valid_dataset = torch.utils.data.random_split(dataset, [train_size, valid_size])
-    kwargs = {'num_workers': 0, 'pin_memory': True, 'pin_memory_device': "cuda"}
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, **kwargs)
+    
+    #kwargs = {'num_workers': 4, 'pin_memory': True, 'pin_memory_device': "cuda", 'persistent_workers': True}    
+    kwargs = {'num_workers': 0, 'pin_memory': True, 'pin_memory_device': "cuda"}    
+
+    #train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, **kwargs)
     valid_loader = torch.utils.data.DataLoader(valid_dataset, batch_size=BATCH_SIZE, shuffle=False, **kwargs)
+    
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, **kwargs)
+    data_loader = list(train_loader)
+    
     torch.cuda.nvtx.range_pop()
 
     # Setup network
@@ -255,12 +255,16 @@ def main():
       dim_feedforward_decoder=40,
       dim_feedforward_projecter=40).to(device)
 
+    torch.set_float32_matmul_precision("high")
+    net = torch.compile(net) # NOT SUPPORTED IN 3.11+
+
     # Log the number of parameters
     print("Number of parameters: ", count_parameters(net))
 
     # Setup optimizer
     criterion = nn.MSELoss()
     optimizer = optim.Adam(net.parameters(), lr=LR_INI) 
+    scaler = torch.cuda.amp.GradScaler()
 
     # Create list to store epoch times
     times=[]
@@ -278,18 +282,27 @@ def main():
         start_epoch = time.time()
 
         torch.cuda.nvtx.range_push("train-loop")
-        for in_B, in_F, in_T, in_D, out_H, out_H_head in train_loader:
-            optimizer.zero_grad()
-            torch.cuda.nvtx.range_push("model_data_in")
-            output = net(src=in_B.to(device), tgt=out_H_head.to(device), var=torch.cat((in_F.to(device), in_T.to(device), in_D.to(device)), dim=1), device=device)
+        for in_B, in_F, in_T, in_D, out_H, out_H_head in data_loader:
+            torch.cuda.nvtx.range_push("zero gradient")
+            for param in net.parameters():
+                param.grad = None
             torch.cuda.nvtx.range_pop()
 
-            torch.cuda.nvtx.range_push("loss")
-            loss = criterion(output[:,:-1,:], out_H.to(device)[:,1:,:])
-            torch.cuda.nvtx.range_pop()
+            with torch.autocast(device_type='cuda', dtype=torch.float16):
+                torch.cuda.nvtx.range_push("model_data_in")
+                output = net(src=in_B.to(device), tgt=out_H_head.to(device), var=torch.cat((in_F.to(device), in_T.to(device), in_D.to(device)), dim=1), device=device)
+                torch.cuda.nvtx.range_pop()
+
+                torch.cuda.nvtx.range_push("loss")
+                loss = criterion(output[:,:-1,:], out_H.to(device)[:,1:,:])
+                torch.cuda.nvtx.range_pop()
 
             torch.cuda.nvtx.range_push("backward")
-            loss.backward()
+            scaler.scale(loss).backward()
+            torch.cuda.nvtx.range_pop()
+
+            torch.cuda.nvtx.range_push("unscale")
+            scaler.unscale_(optimizer)
             torch.cuda.nvtx.range_pop()
 
             torch.cuda.nvtx.range_push("clip_grad_norm")
@@ -297,22 +310,15 @@ def main():
             torch.cuda.nvtx.range_pop()
 
             torch.cuda.nvtx.range_push("optimizer")
-            optimizer.step()
+            scaler.step(optimizer)
+            torch.cuda.nvtx.range_pop()
+
+            torch.cuda.nvtx.range_push("scaler_update")
+            scaler.update()
             torch.cuda.nvtx.range_pop()
 
             epoch_train_loss += loss.item()
 
-        torch.cuda.nvtx.range_pop()
-
-        torch.cuda.nvtx.range_push("validation")
-        # Compute validation
-        with torch.no_grad():
-            net.eval()
-            epoch_valid_loss = 0
-            for in_B, in_F, in_T, in_D, out_H, out_H_head in valid_loader:
-                output = net(src=in_B.to(device), tgt=out_H_head.to(device), var=torch.cat((in_F.to(device), in_T.to(device), in_D.to(device)), dim=1), device=device)
-                loss = criterion(output[:,:-1,:], out_H.to(device)[:,1:,:])
-                epoch_valid_loss += loss.item()
         torch.cuda.nvtx.range_pop()
         
         # Record epoch time 
@@ -321,19 +327,29 @@ def main():
         times.append(end_epoch-start_epoch)
 
         if (epoch_i+1)%200 == 0:
-          print(f"Epoch {epoch_i+1:2d} "
-              f"Train {epoch_train_loss / len(train_dataset) * 1e5:.5f} "
-              f"Valid {epoch_valid_loss / len(valid_dataset) * 1e5:.5f}")
+            print(f"Epoch {epoch_i+1:2d} "
+              f"Train {epoch_train_loss / len(train_dataset) * 1e5:.5f} ")
+
+            torch.cuda.nvtx.range_push("validation")
+            # Compute validation
+            with torch.no_grad():
+                net.eval()
+                epoch_valid_loss = 0
+                for in_B, in_F, in_T, in_D, out_H, out_H_head in valid_loader:
+                    output = net(src=in_B.to(device), tgt=out_H_head.to(device), var=torch.cat((in_F.to(device), in_T.to(device), in_D.to(device)), dim=1), device=device)
+                    loss = criterion(output[:,:-1,:], out_H.to(device)[:,1:,:])
+                    epoch_valid_loss += loss.item()
+            torch.cuda.nvtx.range_pop()
+            print(f"Valid {epoch_valid_loss / len(valid_dataset) * 1e5:.5f}")
         
         torch.cuda.nvtx.range_pop()
 
-
     elapsed = time.time() - start_time
     print(f"Total Time Elapsed: {elapsed}")    
-    print(f"Average time per Epoch: {sum(times[DISCARD:])/NUM_EPOCH}")
+    print(f"Average time per Epoch: {sum(times[DISCARD:])/(NUM_EPOCH-DISCARD)}")
     
     # Save the model parameters
-    torch.save(net.state_dict(), "/scratch/gpfs/sw0123/Model_TransformerFull.sd")
+    torch.save(net.state_dict(), "/scratch/gpfs/sw0123/Model_TransformerMP.sd")
     print("Training finished! Model is saved!")
 
     timeNP = np.array(times)
