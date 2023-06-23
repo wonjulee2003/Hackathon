@@ -233,7 +233,9 @@ def main():
     valid_size = len(dataset) - train_size
     train_dataset, valid_dataset = torch.utils.data.random_split(dataset, [train_size, valid_size])
     
-    kwargs = {'num_workers': 4, 'pin_memory': True, 'pin_memory_device': "cuda", 'persistent_workers': True}    
+    #kwargs = {'num_workers': 4, 'pin_memory': True, 'pin_memory_device': "cuda", 'persistent_workers': True}    
+    kwargs = {'num_workers': 0, 'pin_memory': True, 'pin_memory_device': "cuda"}    
+
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, **kwargs)
     valid_loader = torch.utils.data.DataLoader(valid_dataset, batch_size=BATCH_SIZE, shuffle=False, **kwargs)
     torch.cuda.nvtx.range_pop()
@@ -320,17 +322,6 @@ def main():
             epoch_train_loss += loss.item()
 
         torch.cuda.nvtx.range_pop()
-
-        torch.cuda.nvtx.range_push("validation")
-        # Compute validation
-        with torch.no_grad():
-            net.eval()
-            epoch_valid_loss = 0
-            for in_B, in_F, in_T, in_D, out_H, out_H_head in valid_loader:
-                output = net(src=in_B.to(device), tgt=out_H_head.to(device), var=torch.cat((in_F.to(device), in_T.to(device), in_D.to(device)), dim=1), device=device)
-                loss = criterion(output[:,:-1,:], out_H.to(device)[:,1:,:])
-                epoch_valid_loss += loss.item()
-        torch.cuda.nvtx.range_pop()
         
         # Record epoch time 
         torch.cuda.synchronize()
@@ -338,12 +329,22 @@ def main():
         times.append(end_epoch-start_epoch)
 
         if (epoch_i+1)%200 == 0:
-          print(f"Epoch {epoch_i+1:2d} "
-              f"Train {epoch_train_loss / len(train_dataset) * 1e5:.5f} "
-              f"Valid {epoch_valid_loss / len(valid_dataset) * 1e5:.5f}")
+            print(f"Epoch {epoch_i+1:2d} "
+              f"Train {epoch_train_loss / len(train_dataset) * 1e5:.5f} ")
+
+            torch.cuda.nvtx.range_push("validation")
+            # Compute validation
+            with torch.no_grad():
+                net.eval()
+                epoch_valid_loss = 0
+                for in_B, in_F, in_T, in_D, out_H, out_H_head in valid_loader:
+                    output = net(src=in_B.to(device), tgt=out_H_head.to(device), var=torch.cat((in_F.to(device), in_T.to(device), in_D.to(device)), dim=1), device=device)
+                    loss = criterion(output[:,:-1,:], out_H.to(device)[:,1:,:])
+                    epoch_valid_loss += loss.item()
+            torch.cuda.nvtx.range_pop()
+            print(f"Valid {epoch_valid_loss / len(valid_dataset) * 1e5:.5f}")
         
         torch.cuda.nvtx.range_pop()
-
 
     elapsed = time.time() - start_time
     print(f"Total Time Elapsed: {elapsed}")    

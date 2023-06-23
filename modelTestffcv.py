@@ -176,17 +176,17 @@ def load_dataset(data_length=128):
 
     # Format data into tensors
 
-    to_tensor = ToTensor()
-    # in_B = torch.from_numpy(B).float().view(-1, data_length, 1)
-    in_B = to_tensor(B).view(-1, data_length, 1)
-    # in_F = torch.from_numpy(Freq).float().view(-1, 1)
-    in_F = to_tensor(Freq).view(-1, data_length, 1)
-    # in_T = torch.from_numpy(Temp).float().view(-1, 1)
-    in_T = to_tensor(Temp).view(-1, data_length, 1)
-    #in_D = torch.from_numpy(Hdc).float().view(-1, 1)
-    in_D = to_tensor(Hdc).view(-1, data_length, 1)
-    # out_H = torch.from_numpy(H).float().view(-1, data_length, 1)
-    out_H = to_tensor(H).view(-1, data_length, 1)
+    #to_tensor = ToTensor()
+    in_B = torch.from_numpy(B).float().view(-1, data_length, 1)
+    #in_B = to_tensor(B).view(-1, data_length, 1)
+    in_F = torch.from_numpy(Freq).float().view(-1, 1)
+    #in_F = to_tensor(Freq).view(-1, data_length, 1)
+    in_T = torch.from_numpy(Temp).float().view(-1, 1)
+    #in_T = to_tensor(Temp).view(-1, data_length, 1)
+    in_D = torch.from_numpy(Hdc).float().view(-1, 1)
+    #in_D = to_tensor(Hdc).view(-1, data_length, 1)
+    out_H = torch.from_numpy(H).float().view(-1, data_length, 1)
+    #out_H = to_tensor(H).view(-1, data_length, 1)
 
 
     # Normalize
